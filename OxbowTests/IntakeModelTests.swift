@@ -206,6 +206,79 @@ struct IntakeModelTests {
     #expect(model.hasSettledMetadata, "metadata is untouched, not idled the way reset() idles it")
   }
 
+  // MARK: - Pending intake
+
+  /// `apply(_:)` is how a Watching finding reaches this form: `WatchingModel`
+  /// hands `IntakeWindow` the archive id and its channel's frozen settings,
+  /// and this is what turns those into the fields the rest of the model
+  /// reads. The seeded values below all differ from the pending ones, so a
+  /// version that silently kept whatever `Preferences` had seeded could not
+  /// pass this by accident.
+  @Test func applySetsTheLinkAndAllFourSettings() {
+    let model = makeModel(preferences: Self.store {
+      $0.qualityCap = .best
+      $0.output = .videoWithChat
+      $0.chatSize = .medium
+      $0.destination = URL(filePath: "/Users/someone/Downloads")
+    })
+
+    let pending = PendingIntake(
+      archiveID: "2844548319",
+      settings: Watch.Settings(
+        destinationPath: "/Users/someone/Archive",
+        qualityCap: .p720,
+        output: .video,
+        chatSize: .large))
+
+    model.apply(pending)
+
+    #expect(model.linkText == "2844548319")
+    #expect(model.target != nil, "a bare numeric id parses as a video")
+    #expect(model.qualityCap == .p720)
+    #expect(model.output == .video)
+    #expect(model.chatSize == .large)
+    #expect(model.folder == URL(filePath: "/Users/someone/Archive"))
+  }
+
+  /// The ordering `IntentSubmission.submit` already depends on, for the same
+  /// reason (see that type's own comment): `load()` reads `qualityCap` to
+  /// pick a rendition, so whatever `apply(_:)` sets has to be in place
+  /// *before* `load()` runs — never after.
+  ///
+  /// Proven rather than merely asserted-on-paper: the model starts on a
+  /// `.best` cap, which `load()` alone resolves to "best available" (an empty
+  /// `quality`). Applying a `.p720` cap and *then* loading instead resolves
+  /// `quality` to the rendition that cap actually selects. A version of
+  /// `apply(_:)` that ran too late — or an `IntakeWindow` that called
+  /// `load()` before `apply(_:)` — would leave `quality` empty here instead.
+  @Test func appliedSettingsAreInPlaceBeforeLoadResolvesQuality() async {
+    let model = makeModel(
+      preferences: Self.store {
+        $0.qualityCap = .best
+        $0.output = .videoWithChat
+      },
+      info: Self.info(qualities: [
+        StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 8_000_000),
+        StreamQuality(name: "720p60", resolution: "1280x720", bitsPerSecond: 3_000_000),
+      ]))
+
+    let pending = PendingIntake(
+      archiveID: "2844548319",
+      settings: Watch.Settings(
+        destinationPath: "/Users/someone/Archive",
+        qualityCap: .p720,
+        output: .video,
+        chatSize: .medium))
+
+    model.apply(pending)
+    await model.load()
+
+    #expect(
+      model.quality == "720p60",
+      "load() must resolve against the applied .p720 cap, not the seeded .best one")
+    #expect(model.output == .video, "apply()'s output survives a load() that never touches it")
+  }
+
   // MARK: - Quality, both directions
 
   @Test func metadataResolvesTheCapIntoARendition() async {

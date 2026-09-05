@@ -29,6 +29,18 @@ struct OxbowApp: App {
   /// same `AppComposition.isUserSession` guard, in the `.task` below.
   @State private var watchStore: WatchStore?
 
+  /// A Watching finding waiting to be applied the next time intake opens.
+  ///
+  /// Set by `WatchingModel.openIntake` (below) and consumed by
+  /// `IntakeWindow.onAppear`, which clears it back to `nil` immediately after
+  /// applying it — see that clearing's own comment for why leaving it set
+  /// would be the Add Channel window's missing-reset bug all over again.
+  /// Held here, rather than on `WatchingModel` itself, for the same reason
+  /// `watching` and `poller` are: this is the one instance of intake's state
+  /// across the app's whole run (`Window`, not `WindowGroup`), and the value
+  /// has to outlive whichever `WatchingModel` happened to set it.
+  @State private var pendingIntake: PendingIntake?
+
   /// Read once. Nothing in it can change while the app runs — it is all
   /// stamped into the bundle at build time — and both the menu item and the
   /// window title need the name.
@@ -77,7 +89,7 @@ struct OxbowApp: App {
         if let content {
           QueueView(
             content: content, updates: updates, watching: watching, poller: poller,
-            canAddChannel: watchStore != nil)
+            canAddChannel: watchStore != nil, pendingIntake: $pendingIntake)
         } else {
           // This spinner covers `QueueEngine.start()` too, deliberately.
           // `QueueHost.ready()` answers only after the saved queue is loaded
@@ -124,10 +136,13 @@ struct OxbowApp: App {
         let store = WatchStore(fileURL: AppComposition.watchStoreURL(supportDirectory: support))
         watching = WatchingModel(
           store: store,
-          // The intake window this should open does not exist yet — that is
-          // the next plan's Add Channel work. Until then Add can still mark
-          // an archive seen; it just cannot hand it anywhere.
-          openIntake: { _, _ in })
+          // Only sets the state — opening the window itself is `QueueView`'s
+          // job, via the `.onChange(of: pendingIntake)` beside its own
+          // `openWindow`. This closure has no environment to call it from:
+          // it runs inside a plain `.task`, not a view's own body.
+          openIntake: { archive, watch in
+            pendingIntake = PendingIntake(archiveID: archive.id, settings: watch.settings)
+          })
         watchStore = store
         poller = WatchPoller.live(supportDirectory: support)
         poller?.start()
@@ -183,7 +198,7 @@ struct OxbowApp: App {
       // button are disabled in that case — but the window needs one, and there
       // is no honest thing to put here instead.
       if let controller {
-        IntakeWindow(controller: controller)
+        IntakeWindow(controller: controller, pendingIntake: $pendingIntake)
       }
     }
     .defaultSize(width: 560, height: 680)

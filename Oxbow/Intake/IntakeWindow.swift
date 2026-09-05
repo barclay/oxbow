@@ -32,15 +32,30 @@ struct IntakeWindow: View {
   @State private var isAdding = false
   @FocusState private var isLinkFocused: Bool
 
-  init(controller: QueueController) {
+  /// A finding waiting to be applied, from `OxbowApp`'s own `@State`.
+  ///
+  /// **A binding, not a plain value, so this window can clear it.** `OxbowApp`
+  /// holds the one instance of this scene's worth of state across opens and
+  /// closes (see `IntakeModel.reset()`'s own comment on why `Window` rather
+  /// than `WindowGroup` matters here), so a pending finding this window does
+  /// not clear after consuming would resurrect itself on the next ⌘N — the
+  /// exact staleness bug the Add Channel window's missing reset caused.
+  @Binding private var pendingIntake: PendingIntake?
+
+  init(controller: QueueController, pendingIntake: Binding<PendingIntake?>) {
     _model = State(initialValue: IntakeModel(controller: controller))
+    _pendingIntake = pendingIntake
   }
 
   /// For previews, and for anything else that wants to drive the sheet without
   /// an engine behind it — `IntakeModel`'s own init takes closures for exactly
   /// this reason, and this is what lets a preview reach them.
-  init(model: IntakeModel) {
+  ///
+  /// `pendingIntake` defaults to a constant `nil`: no preview below exercises
+  /// the Watching hand-off, so none of them need a real binding to clear.
+  init(model: IntakeModel, pendingIntake: Binding<PendingIntake?> = .constant(nil)) {
     _model = State(initialValue: model)
+    _pendingIntake = pendingIntake
   }
 
   var body: some View {
@@ -86,7 +101,17 @@ struct IntakeWindow: View {
       #if DEBUG
       if let link = ScreenshotFixture.link { model.linkText = link }
       #endif
-      prefillFromClipboard()
+      // A pending finding wins over the clipboard: someone who clicked Add on
+      // a specific video did not mean whatever happens to be on their
+      // pasteboard. Cleared immediately after applying — this is the one
+      // consumption point, and leaving it set would resurrect the same
+      // finding on the next ⌘N.
+      if let pendingIntake {
+        model.apply(pendingIntake)
+        self.pendingIntake = nil
+      } else {
+        prefillFromClipboard()
+      }
     }
     // Trim has to be opened *after* the metadata lands, not with the link:
     // `load()` clears `isTrimExpanded` when it arrives, because a trim carried

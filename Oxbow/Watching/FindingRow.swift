@@ -77,15 +77,10 @@ struct FindingRow: View {
 
         // The prominent one: this is the row's whole reason to exist, and
         // Ignore is the exception a person reaches for less often.
-        //
-        // Provisional wording: `openIntake` is still a no-op
-        // (`OxbowApp.swift`), so today this only marks the archive seen and
-        // removes the row — it does not open anything. Once intake is wired
-        // up, restore the fuller promise this tooltip used to make.
         Button("Add", action: onAdd)
           .buttonStyle(.borderedProminent)
           .controlSize(.small)
-          .help("Mark this video seen so it stops being offered.")
+          .help("Open Add Download with this video filled in.")
       }
     }
     .padding(.vertical, 4)

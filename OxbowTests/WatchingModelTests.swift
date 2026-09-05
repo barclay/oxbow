@@ -108,6 +108,35 @@ struct WatchingModelTests {
     #expect(model.sections[0].archives.isEmpty)
   }
 
+  /// The exact shape `OxbowApp` wires in production — its `openIntake`
+  /// closure only ever builds a `PendingIntake` from the watch `add` hands it,
+  /// never from `Preferences`. `addingPersistsAndOpensIntake` above only pins
+  /// the archive id; this pins the other half of the hand-off, that a channel
+  /// someone capped at 720p, video-only actually carries those settings to
+  /// intake rather than whatever the global defaults happen to be.
+  @Test func addHandsIntakeTheWatchsFrozenSettingsNotGlobalPreferences() throws {
+    let store = temporaryStore()
+    let capped = Watch(
+      login: "ninja", displayName: "Ninja",
+      settings: .init(
+        destinationPath: "/Users/x/Archive", qualityCap: .p720,
+        output: .video, chatSize: .large),
+      downloadsAutomatically: false, seen: [])
+    try store.save([capped])
+
+    var pending: PendingIntake?
+    let model = WatchingModel(store: store, openIntake: { archive, watch in
+      pending = PendingIntake(archiveID: archive.id, settings: watch.settings)
+    })
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    model.add(archive("1"), from: "ninja")
+
+    let handedOff = try #require(pending)
+    #expect(handedOff.archiveID == "1")
+    #expect(handedOff.settings == capped.settings)
+  }
+
   @Test func anActionOnAnUnknownChannelIsIgnoredRatherThanCrashing() throws {
     // The watch file can change under us — a later stage will let someone
     // remove a channel while findings from it are still on screen.

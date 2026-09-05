@@ -26,6 +26,15 @@ struct QueueView: View {
   /// view should be built to notice if it ever stopped holding.
   let canAddChannel: Bool
 
+  /// A Watching finding waiting to be applied, from `OxbowApp`'s own `@State`.
+  ///
+  /// **This is where `WatchingModel.openIntake` actually opens anything.**
+  /// The closure `OxbowApp` hands to `WatchingModel` only sets this binding —
+  /// it runs inside a plain `.task`, with no `openWindow` to call — so the
+  /// `.onChange` below is what turns "a finding is pending" into the intake
+  /// window actually appearing, using the `openWindow` this view already has.
+  @Binding var pendingIntake: PendingIntake?
+
   /// Opens the intake window (`OxbowApp.intakeWindowID`). Intake is a window
   /// rather than a sheet on this one — see `IntakeWindow` for why — so the
   /// toolbar button hands off to the scene instead of presenting anything.
@@ -189,6 +198,22 @@ struct QueueView: View {
       guard let results else { return }
       watching?.apply(results)
     }
+    // See `pendingIntake`'s own doc comment above: this is the one place that
+    // turns a finding's Add into the intake window actually opening. If the
+    // window is already open, `openWindow` just re-focuses it — `Window`'s
+    // own single-instance guarantee — and `IntakeWindow.onAppear` does not
+    // fire a second time, so a finding Added while intake was already open on
+    // a different video would sit unconsumed until the next close and
+    // reopen. Accepted rather than fixed here: `onAppear` firing only on
+    // genuine appearance is a SwiftUI `Window` scene's normal behaviour, not
+    // a hook this view can ask for a second time, and clicking Add while a
+    // different download is already mid-edit in an open intake window is a
+    // narrow enough case that a future close/reopen recovering it is an
+    // acceptable cost.
+    .onChange(of: pendingIntake) { _, newValue in
+      guard newValue != nil else { return }
+      openWindow(id: OxbowApp.intakeWindowID)
+    }
   }
 
   /// The queue itself. With no controller there are no jobs, so this is the
@@ -339,7 +364,8 @@ struct QueueView: View {
     updates: UpdateModel { .upToDate },
     watching: nil,
     poller: nil,
-    canAddChannel: false)
+    canAddChannel: false,
+    pendingIntake: .constant(nil))
   .frame(width: 720, height: 420)
 }
 
@@ -354,7 +380,8 @@ struct QueueView: View {
     updates: updates,
     watching: nil,
     poller: nil,
-    canAddChannel: false)
+    canAddChannel: false,
+    pendingIntake: .constant(nil))
     .frame(width: 720, height: 420)
     .task { await updates.checkAutomatically() }
 }

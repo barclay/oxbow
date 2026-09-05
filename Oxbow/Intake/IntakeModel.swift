@@ -329,6 +329,28 @@ final class IntakeModel {
     isOptionsExpanded = preferences.optionsPanelIsExpanded
   }
 
+  /// Carries a Watching finding into this form: the archive id becomes the
+  /// link, and its channel's frozen settings are applied over whatever this
+  /// window was seeded with.
+  ///
+  /// **Before any `load()`, deliberately — the same ordering
+  /// `IntentSubmission.submit` already depends on, for the same reason (see
+  /// that type's own comment).** `load()` reads `output` to decide whether
+  /// resolution must skip a rendition a composite cannot use, and reads
+  /// `qualityCap` to pick the rendition at all. This method only ever sets
+  /// properties — it never calls `load()` itself — so the caller has to run
+  /// it first: `IntakeWindow` does, in `.onAppear`, before its own
+  /// `.task(id: model.linkText)` fires `load()` for the newly-set link.
+  /// Applied afterwards, `quality` would resolve against whichever policy was
+  /// already in place and end up naming a rendition nobody asked for.
+  func apply(_ pending: PendingIntake) {
+    linkText = pending.archiveID
+    qualityCap = pending.settings.qualityCap
+    output = pending.settings.output
+    chatSize = pending.settings.chatSize
+    folder = pending.settings.destination
+  }
+
   // MARK: - The link
 
   var target: TwitchLink.Target? { TwitchLink.parse(linkText) }
