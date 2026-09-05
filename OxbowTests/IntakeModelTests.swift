@@ -214,13 +214,20 @@ struct IntakeModelTests {
   /// reads. The seeded values below all differ from the pending ones, so a
   /// version that silently kept whatever `Preferences` had seeded could not
   /// pass this by accident.
+  ///
+  /// `fileExists` is stubbed to accept the pending destination, so this is
+  /// the "reachable" half of the fallback behaviour; see
+  /// `applyFallsBackToDownloadsWhenTheWatchDestinationIsUnreachable` below for
+  /// the other half, over the same pending intake.
   @Test func applySetsTheLinkAndAllFourSettings() {
-    let model = makeModel(preferences: Self.store {
-      $0.qualityCap = .best
-      $0.output = .videoWithChat
-      $0.chatSize = .medium
-      $0.destination = URL(filePath: "/Users/someone/Downloads")
-    })
+    let model = makeModel(
+      preferences: Self.store {
+        $0.qualityCap = .best
+        $0.output = .videoWithChat
+        $0.chatSize = .medium
+        $0.destination = URL(filePath: "/Users/someone/Downloads")
+      },
+      fileExists: { $0 == URL(filePath: "/Users/someone/Archive") })
 
     let pending = PendingIntake(
       archiveID: "2844548319",
@@ -238,6 +245,41 @@ struct IntakeModelTests {
     #expect(model.output == .video)
     #expect(model.chatSize == .large)
     #expect(model.folder == URL(filePath: "/Users/someone/Archive"))
+    #expect(model.destinationFellBack == false)
+  }
+
+  /// The finding this guards against: `Watch.Settings.destination` is an
+  /// unconditional `URL(filePath:)` with no existence check of its own, so
+  /// without one in `apply(_:)` itself, a channel configured to a since
+  /// unplugged volume would set `folder` to that dead path and
+  /// `QueueEngine.move` would recreate it on the boot volume instead of
+  /// falling back — see the doc comment on `apply(_:)` for the full chain.
+  ///
+  /// `fileExists` returns false for every path, so this cannot pass by
+  /// `apply(_:)` merely ignoring the watch's destination and reseeding from
+  /// `Preferences` instead: that store's own destination,
+  /// `/Users/someone/Downloads`, differs from the fallback asserted here,
+  /// `/Users/t/Downloads` — this model's injected `homeDirectory`.
+  @Test func applyFallsBackToDownloadsWhenTheWatchDestinationIsUnreachable() {
+    let model = makeModel(
+      preferences: Self.store {
+        $0.destination = URL(filePath: "/Users/someone/Downloads")
+      },
+      fileExists: { _ in false },
+      homeDirectory: URL(filePath: "/Users/t"))
+
+    let pending = PendingIntake(
+      archiveID: "2844548319",
+      settings: Watch.Settings(
+        destinationPath: "/Volumes/Unplugged/Archive",
+        qualityCap: .p720,
+        output: .video,
+        chatSize: .large))
+
+    model.apply(pending)
+
+    #expect(model.folder == URL(filePath: "/Users/t/Downloads"))
+    #expect(model.destinationFellBack)
   }
 
   /// The ordering `IntentSubmission.submit` already depends on, for the same
@@ -1095,7 +1137,8 @@ struct IntakeModelTests {
     failure: Error? = nil,
     recorder: Recorder = Recorder(),
     fileExists: @escaping (URL) -> Bool = { _ in false },
-    volumeSpace: VolumeSpace = IntakeModelTests.volume(free: 1_000_000_000_000))
+    volumeSpace: VolumeSpace = IntakeModelTests.volume(free: 1_000_000_000_000),
+    homeDirectory: URL = URL(filePath: "/Users/t"))
     -> IntakeModel
   {
     IntakeModel(
@@ -1108,6 +1151,7 @@ struct IntakeModelTests {
       calendar: Self.pacific,
       fileExists: fileExists,
       volumeSpace: volumeSpace,
+      homeDirectory: homeDirectory,
       preferences: preferences)
   }
 

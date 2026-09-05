@@ -200,6 +200,12 @@ final class IntakeModel {
   /// drifts.
   private let workspaceVolumePath: URL
 
+  /// Where `apply(_:)` falls back to when a watch's frozen destination no
+  /// longer resolves — mirrors `Preferences.factoryDestination`, which needs
+  /// the same injected value for the same reason: a test cannot depend on
+  /// the real `~/`.
+  private let homeDirectory: URL
+
   /// Distinguishes the fetch in flight from one the user has already
   /// superseded by editing the link. Without it a slow fetch for the previous
   /// link lands last and names the job after the wrong video.
@@ -214,6 +220,7 @@ final class IntakeModel {
     },
     volumeSpace: VolumeSpace = .live,
     workspaceVolumePath: URL = URL.applicationSupportDirectory,
+    homeDirectory: URL = .homeDirectory,
     preferences: Preferences)
   {
     self.fetchInfo = fetchInfo
@@ -222,6 +229,7 @@ final class IntakeModel {
     self.fileExists = fileExists
     self.volumeSpace = volumeSpace
     self.workspaceVolumePath = workspaceVolumePath
+    self.homeDirectory = homeDirectory
     self.preferences = preferences
     self.qualityCap = preferences.qualityCap
     self.output = preferences.output
@@ -343,12 +351,35 @@ final class IntakeModel {
   /// `.task(id: model.linkText)` fires `load()` for the newly-set link.
   /// Applied afterwards, `quality` would resolve against whichever policy was
   /// already in place and end up naming a rendition nobody asked for.
+  /// **The destination gets the same unreachable-folder check
+  /// `Preferences.destination` gives the standing default, not a second,
+  /// unchecked assignment.** `Watch.Settings.destination` is a bare
+  /// `URL(filePath:)` — it has no opinion about whether that path still
+  /// resolves, because freezing a channel's settings at add-time (this
+  /// type's own doc comment) has nothing to do with whether the drive is
+  /// mounted months later when a finding fires. Skipping this check would
+  /// hand `folder` a dead path silently: `QueueEngine.move` creates any
+  /// destination it is given with `withIntermediateDirectories: true`, so an
+  /// unplugged `/Volumes/Archive/SomeChannel` would come back as a brand-new
+  /// empty directory on the boot volume instead of a warning (design doc
+  /// §6.2). Reuses `fileExists`, the same injected check `destinationCollision`
+  /// already uses, rather than a second mechanism — and reuses
+  /// `destinationFellBack`/`Preferences.factoryDestination`, the same flag and
+  /// fallback `reseedFromPreferences()` already surfaces, so `IntakeWindow`'s
+  /// existing "Oxbow will use Downloads" warning fires here for free.
   func apply(_ pending: PendingIntake) {
     linkText = pending.archiveID
     qualityCap = pending.settings.qualityCap
     output = pending.settings.output
     chatSize = pending.settings.chatSize
-    folder = pending.settings.destination
+    let destination = pending.settings.destination
+    if fileExists(destination) {
+      folder = destination
+      destinationFellBack = false
+    } else {
+      folder = Preferences.factoryDestination(homeDirectory: homeDirectory)
+      destinationFellBack = true
+    }
   }
 
   // MARK: - The link
